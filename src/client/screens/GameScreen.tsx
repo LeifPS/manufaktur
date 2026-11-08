@@ -2,6 +2,8 @@ import { useState } from 'preact/hooks';
 import { WorkshopScene } from '../art/workshop/WorkshopScene';
 import { api } from '../api';
 import { dispatch, me, now, serverState, view } from '../store';
+import { gaveOrHelped, loadVillage, startVillagePolling, unreadNews, village, villageOpened } from '../villageStore';
+import { useEffect } from 'preact/hooks';
 import { T } from '../strings';
 import { Counter } from '../ui/Counter';
 import { Icon } from '../ui/Icons';
@@ -17,18 +19,20 @@ import './screens.css';
 
 const TOOLS: { id: PanelId; icon: Parameters<typeof Icon>[0]['name'] }[] = [
   { id: 'orders', icon: 'orders' }, { id: 'workshop', icon: 'workshop' }, { id: 'people', icon: 'people' },
-  { id: 'studio', icon: 'studio' }, { id: 'recipes', icon: 'recipes' }, { id: 'shop', icon: 'shop' },
+  { id: 'village', icon: 'village' }, { id: 'studio', icon: 'studio' }, { id: 'recipes', icon: 'recipes' }, { id: 'shop', icon: 'shop' },
 ];
 
 export function GameScreen({ onLogout }: { onLogout: () => void }) {
   const s = view.value;
   const [panel, setPanel] = useState<{ id: PanelId; arg?: string } | null>(initialPanel());
   const [menu, setMenu] = useState(false);
+  useEffect(() => { void loadVillage(); startVillagePolling(); }, []);
   const [awayAtLoad, setAwayAtLoad] = useState(() => serverState.value?.away ?? null);
   const [skipTutorial, setSkipTutorial] = useState(() => { try { return localStorage.getItem('mf_skip_tutorial') === '1'; } catch { return false; } });
   if (!s) return <div class="loading">{T.loading}</div>;
   const pendingMilestone = s.milestonesDone.find((m) => !s.milestonesAcked.includes(m));
-  const step = onboardingStep(s);
+  const ctx = { villageOpened: villageOpened.value, gaveOrHelped: gaveOrHelped.value };
+  const step = onboardingStep(s, ctx);
   const highlight = !skipTutorial && step < ONBOARDING.length && !panel ? ONBOARDING[step].target : undefined;
   const open = (id: PanelId, arg?: string) => setPanel({ id, arg });
   return (
@@ -51,7 +55,7 @@ export function GameScreen({ onLogout }: { onLogout: () => void }) {
         {TOOLS.map((t) => {
           const lock = panelUnlock(t.id);
           const locked = !!lock && !s.unlocks.includes(lock);
-          const count = t.id === 'orders' && !locked ? s.orders.length : 0;
+          const count = t.id === 'orders' && !locked ? s.orders.length : t.id === 'village' ? unreadNews.value : 0;
           return (
             <button class="tool" onClick={() => open(t.id)} aria-label={T.tabs[t.id as keyof typeof T.tabs]} title={locked ? T.locked : undefined} style={{ borderRadius: '14px 9px 12px 8px' }}>
               <Icon name={locked ? 'lock' : t.icon} />
@@ -63,9 +67,9 @@ export function GameScreen({ onLogout }: { onLogout: () => void }) {
       </nav>
       {panel && <PanelHost id={panel.id} arg={panel.arg} onClose={() => setPanel(null)} onOpen={open} />}
       {!skipTutorial && !panel && !awayAtLoad && !pendingMilestone && (
-        <OnboardingCard s={s} onOpen={open} onSkip={() => { try { localStorage.setItem('mf_skip_tutorial', '1'); } catch { /* ignore */ } setSkipTutorial(true); }} />
+        <OnboardingCard s={s} ctx={ctx} onOpen={open} onSkip={() => { try { localStorage.setItem('mf_skip_tutorial', '1'); } catch { /* ignore */ } setSkipTutorial(true); }} />
       )}
-      {awayAtLoad && <AwaySummary away={awayAtLoad} boosted={now.value < s.boostUntil} now={s.lastTick} onClose={() => { setAwayAtLoad(null); if (s.away) dispatch({ type: 'ackAway' }); }} />}
+      {awayAtLoad && <AwaySummary away={awayAtLoad} boosted={now.value < s.boostUntil} now={s.lastTick} news={(village.value?.news ?? []).filter((n) => n.at > awayAtLoad.since && (n.for === null || n.for === me.value?.playerId))} onClose={() => { setAwayAtLoad(null); if (s.away) dispatch({ type: 'ackAway' }); }} />}
       {!awayAtLoad && pendingMilestone && <Celebration milestoneId={pendingMilestone} onClose={() => dispatch({ type: 'ackMilestone', id: pendingMilestone })} />}
       {menu && (
         <Sheet title={T.village} onClose={() => setMenu(false)}>

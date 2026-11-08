@@ -10,6 +10,8 @@ import { Button } from '../ui/Button';
 import { DesignPot } from './common';
 import { formatDuration } from './logic';
 import { MarketPanel } from './MarketPanel';
+import { ownDesigns } from '../../shared/village/apply';
+import { DecorSection } from './village/DecorPanel';
 import type { PanelId } from './PanelHost';
 
 const STAGE_LABEL: Record<string, string> = { prepare: 'Kneten', form: 'Drehen', dry: 'Trocknen', bisque: 'Schrühbrand', glaze: 'Glasieren', glazeFire: 'Glasurbrand' };
@@ -31,7 +33,7 @@ function Production({ s }: { s: GameState }) {
       <h3>Was soll gedreht werden?</h3>
       <p class="muted" style={{ fontSize: '.9em' }}>Wähle einen Entwurf – deine Leute stellen ihn dann immer wieder her, auch wenn du weg bist.</p>
       <div class="design-pick">
-        {s.designs.map((d) => (
+        {ownDesigns(s).map((d) => (
           <button aria-pressed={current === d.id} onClick={() => dispatch({ type: 'setStanding', designId: current === d.id ? null : d.id, batchSize: Math.min(size, cap), autoBuy: s.standing?.autoBuy ?? true })}>
             <DesignPot s={s} d={d} size={64} /><div>{d.name}</div>
           </button>
@@ -135,6 +137,7 @@ export function WorkshopPanel({ s, onOpen }: { s: GameState; onOpen: (id: PanelI
           </button>
         ))}
       </div>
+      <DecorSection s={s} />
       <section class="panel-section" style={{ marginTop: '16px' }}>
         <h3>Zweiter Raum</h3>
         {!s.unlocks.includes('room2') ? <p class="muted">Ab 60 Ruf wächst deine Werkstatt um einen Raum.</p> : (

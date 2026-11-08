@@ -1,13 +1,16 @@
 import { advance } from './advance';
 import { EFFECTS, getStationDef, MATERIALS, own, STATIONS } from './content';
 import { EXPERIMENT_COST, runExperiment, validateRecipe } from './discovery';
-import { validateDesign } from './design';
+import { glazeForDesign, validateDesign } from './design';
 import { newId } from './ids';
 import { pieceValue } from './market';
 import { orderReward } from './orders';
 import { kilnCapacity, startNewBatch } from './production';
 import { checkMilestones, touchSeen } from './progression';
 import { rollWorker } from './state';
+import { hasBuilding } from './village/buildings';
+import { DECOR, MAX_DECOR_PLACED } from './village/decor';
+import { shopPrice } from './village/specialties';
 import type { Design, GameState, GlazeRecipe, MakerMark, StationKind } from './types';
 
 export type Action =
@@ -27,12 +30,14 @@ export type Action =
   | { type: 'handTouch'; stationId: string }
   | { type: 'setAvatar'; seed: number }
   | { type: 'setMakerMark'; mark: MakerMark }
+  | { type: 'placeDecor'; id: string }
+  | { type: 'removeDecor'; id: string }
   | { type: 'ackAway' }
   | { type: 'ackMilestone'; id: string };
 
 export type ActionType = Action['type'];
 export const ACTION_TYPES: ActionType[] = ['buyMaterial', 'queueBatch', 'setStanding', 'hire', 'assign', 'upgradeStation', 'buildStation', 'saveDesign',
-  'deliverOrder', 'declineOrder', 'setStall', 'sellNow', 'experiment', 'handTouch', 'setAvatar', 'setMakerMark', 'ackAway', 'ackMilestone'];
+  'deliverOrder', 'declineOrder', 'setStall', 'sellNow', 'experiment', 'handTouch', 'setAvatar', 'setMakerMark', 'placeDecor', 'removeDecor', 'ackAway', 'ackMilestone'];
 
 export type GameEvent = { kind: 'discovery' | 'glaze' | 'hint' | 'unlock' | 'milestone' | 'orderDone' | 'levelUp'; id: string; text: string };
 export type ActionResult = { ok: true; state: GameState; events: GameEvent[] } | { ok: false; error: string };
@@ -81,21 +86,22 @@ function run(s: GameState, a: Action, now: number, events: GameEvent[]): void {
       const m = own(MATERIALS, a.material) ?? fail('Unbekanntes Material');
       if (m.locked || (m.unlock && !s.unlocks.includes(m.unlock))) fail(`${m.name} gibt es hier noch nicht zu kaufen`);
       if (!isInt(a.amount, 1, 1000)) fail('Ungültige Menge');
-      const cost = m.price * a.amount;
+      const cost = Math.round(shopPrice(s, a.material) * a.amount * 100) / 100;
       if (cost > s.taler) fail('Nicht genug Taler');
-      s.taler -= cost;
+      s.taler = Math.round((s.taler - cost) * 100) / 100;
       s.materials[a.material] = (s.materials[a.material] ?? 0) + a.amount;
       return;
     }
     case 'queueBatch': {
       const d = s.designs.find((x) => x.id === a.designId) ?? fail('Unbekannter Entwurf');
+      if (d.origin) fail('Geschenkte Stücke kannst du nicht nachmachen');
       const err = startNewBatch(s, d, a.count, false, (p) => newId(s, p));
       if (err) fail(err);
       return;
     }
     case 'setStanding': {
       if (a.designId === null) { s.standing = null; return; }
-      if (!s.designs.some((x) => x.id === a.designId)) fail('Unbekannter Entwurf');
+      if (!s.designs.some((x) => x.id === a.designId && !x.origin)) fail('Unbekannter Entwurf');
       const size = a.batchSize ?? 6;
       if (!isInt(size, 1, kilnCapacity(s))) fail(`Chargengröße 1–${kilnCapacity(s)}`);
       s.standing = { designId: a.designId, batchSize: size, autoBuy: a.autoBuy ?? true };
@@ -156,6 +162,7 @@ function run(s: GameState, a: Action, now: number, events: GameEvent[]): void {
     case 'saveDesign': {
       needUnlock(s, 'studio', 'Das Entwurfsstudio ist noch nicht freigeschaltet');
       const d = a.design;
+      if (typeof d?.id === 'string' && (d.id.startsWith('f:') || s.designs.find((x) => x.id === d.id)?.origin)) fail('Geschenkte Entwürfe kannst du nicht ändern');
       const err = validateDesign(d, s);
       if (err) fail(err);
       const clean: Design = {
@@ -167,7 +174,7 @@ function run(s: GameState, a: Action, now: number, events: GameEvent[]): void {
       const inUse = idx >= 0 && (s.goods.some((g) => g.designId === d.id) || s.batches.some((b) => b.designId === d.id));
       if (idx >= 0 && !inUse) s.designs[idx] = clean;
       else {
-        if (s.designs.length >= MAX_DESIGNS) fail(`Höchstens ${MAX_DESIGNS} Entwürfe`);
+        if (s.designs.filter((x) => !x.origin).length >= MAX_DESIGNS) fail(`Höchstens ${MAX_DESIGNS} Entwürfe`);
         const oldId = d.id;
         clean.id = newId(s, 'd');
         s.designs.push(clean);
@@ -184,7 +191,7 @@ function run(s: GameState, a: Action, now: number, events: GameEvent[]): void {
       if (a.quality < order.minQuality) fail('Die Qualität reicht nicht');
       const stack = s.goods.find((g) => g.designId === a.designId && g.quality === a.quality && g.effect === a.effect);
       if (!stack || stack.count < order.count) fail('Davon hast du nicht genug im Regal');
-      const glaze = s.glazes.find((g) => g.id === design.glazeId);
+      const glaze = glazeForDesign(s, design);
       const reward = orderReward(order, stack!, design, glaze);
       stack!.count -= order.count;
       s.goods = s.goods.filter((g) => g.count > 0);
@@ -241,6 +248,17 @@ function run(s: GameState, a: Action, now: number, events: GameEvent[]): void {
       s.makerMark = { shape: m.shape, letter: m.letter, color: m.color };
       return;
     }
+    case 'placeDecor': {
+      if (!own(DECOR, a.id) || !s.decor.includes(a.id)) fail('Diese Dekoration hast du nicht');
+      if (s.decorPlaced.includes(a.id)) fail('Steht schon in der Werkstatt');
+      if (s.decorPlaced.length >= MAX_DECOR_PLACED) fail(`Höchstens ${MAX_DECOR_PLACED} Dekorationen gleichzeitig`);
+      s.decorPlaced.push(a.id);
+      return;
+    }
+    case 'removeDecor':
+      if (!s.decorPlaced.includes(a.id)) fail('Steht nicht in der Werkstatt');
+      s.decorPlaced = s.decorPlaced.filter((x) => x !== a.id);
+      return;
     case 'ackAway':
       s.away = null;
       return;
@@ -251,7 +269,7 @@ function run(s: GameState, a: Action, now: number, events: GameEvent[]): void {
       needUnlock(s, 'studio', 'Glasurversuche gibt es ab dem Entwurfsstudio');
       const err = validateRecipe(a.recipe, s);
       if (err) fail(err);
-      const need: Record<string, number> = { glasurbasis: EXPERIMENT_COST.glasurbasis };
+      const need: Record<string, number> = { glasurbasis: EXPERIMENT_COST.glasurbasis - (hasBuilding(s, 'glasurbibliothek') ? 1 : 0) };
       if (a.recipe.colorant) need[a.recipe.colorant] = EXPERIMENT_COST.colorant;
       for (const [m, n] of Object.entries(need)) if ((s.materials[m] ?? 0) < n) fail(`Für den Versuch fehlt ${MATERIALS[m].name}`);
       for (const [m, n] of Object.entries(need)) s.materials[m] -= n;
