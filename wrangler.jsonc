@@ -11,7 +11,7 @@
     {
       "binding": "DB",
       "database_name": "manufaktur",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "22a6175d-6402-498b-acf2-8ddc3d532dd7",
       "migrations_dir": "migrations"
     }
   ],
