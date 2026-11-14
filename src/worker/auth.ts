@@ -36,10 +36,15 @@ function inviteCode(): string {
   return Array.from(randomBytes(6), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 }
 
-/** `Secure` only over https: browsers drop Secure cookies on plain http (Safari even on localhost, all of them on a LAN IP). */
+/**
+ * Over https the cookie is `SameSite=None; Secure; Partitioned`, so the login also works when the game runs inside a frame on another site
+ * (e.g. the Leif Game Hub): a plain `Lax` cookie is not stored there, and every call after the login answered "Bitte melde dich an".
+ * `Partitioned` (CHIPS) keeps it per embedding site, so another site cannot use it; browsers without CHIPS (Safari) still need a top-level tab.
+ * Over plain http (local dev) `Secure` cookies are dropped (Safari even on localhost, all browsers on a LAN IP), so there it stays `Lax`.
+ */
 function sessionCookie(req: Request, token: string, maxAge = SESSION_TTL_S): string {
-  const secure = new URL(req.url).protocol === 'https:' ? ' Secure;' : '';
-  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly;${secure} SameSite=Lax; Max-Age=${maxAge}`;
+  const https = new URL(req.url).protocol === 'https:';
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; ${https ? 'Secure; SameSite=None; Partitioned' : 'SameSite=Lax'}; Max-Age=${maxAge}`;
 }
 
 export const MAX_BODY = 32 * 1024;

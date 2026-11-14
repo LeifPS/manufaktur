@@ -11,7 +11,7 @@ describe('accounts', () => {
     expect(me.status).toBe(200);
     expect(me.json).toMatchObject({ name: f.name, villageName: 'Tonhausen', inviteCode: f.json.inviteCode });
   });
-  it('session cookie is HttpOnly, Secure, SameSite=Lax', async () => {
+  it('session cookie over https is HttpOnly, Secure, SameSite=None, Partitioned (works inside a frame on another site)', async () => {
     const res = await (await import('cloudflare:test')).SELF.fetch('https://x/api/found', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ villageName: 'Dorf', name: uniqueName(), password: 'geheim123' }),
@@ -19,7 +19,8 @@ describe('accounts', () => {
     const c = res.headers.get('set-cookie')!;
     expect(c).toMatch(/HttpOnly/i);
     expect(c).toMatch(/Secure/i);
-    expect(c).toMatch(/SameSite=Lax/i);
+    expect(c).toMatch(/SameSite=None/i);
+    expect(c).toMatch(/Partitioned/i);
     expect(c).toMatch(/Max-Age=7776000/);
   });
   it('session cookie over plain http is not Secure (browsers would drop it)', async () => {
@@ -30,6 +31,8 @@ describe('accounts', () => {
     const c = res.headers.get('set-cookie')!;
     expect(c).toMatch(/^mf_session=/);
     expect(c).not.toMatch(/Secure/i);
+    expect(c).not.toMatch(/Partitioned/i);
+    expect(c).toMatch(/SameSite=Lax/i);
     expect(c).toMatch(/HttpOnly/i);
   });
   it('join with the invite code works; wrong code is 404', async () => {
